@@ -21,23 +21,23 @@ export function PatientsTab() {
       default:
         return (
           <div className="space-y-4 animate-fade-in">
-            <h1 className="text-2xl font-bold text-foreground">Waiting List Patients</h1>
-            <div className="grid gap-4">
-              <button onClick={() => setViewMode('search')} className="action-button">
+            <h1 className="text-2xl font-bold text-foreground text-center">Waiting List Patients</h1>
+            <div className="flex flex-col items-center gap-4 max-w-md mx-auto">
+              <button onClick={() => setViewMode('search')} className="action-button w-full">
                 <Search className="w-6 h-6 text-primary" />
                 <div className="text-left">
                   <p className="font-medium text-foreground">Search Patient</p>
                   <p className="text-sm text-muted-foreground">Find existing patient records</p>
                 </div>
               </button>
-              <button onClick={() => setViewMode('add')} className="action-button">
+              <button onClick={() => setViewMode('add')} className="action-button w-full">
                 <UserPlus className="w-6 h-6 text-primary" />
                 <div className="text-left">
                   <p className="font-medium text-foreground">Add Patient</p>
                   <p className="text-sm text-muted-foreground">Register a new patient to the waiting list</p>
                 </div>
               </button>
-              <button onClick={() => setViewMode('list')} className="action-button">
+              <button onClick={() => setViewMode('list')} className="action-button w-full">
                 <List className="w-6 h-6 text-primary" />
                 <div className="text-left">
                   <p className="font-medium text-foreground">View Complete List</p>
