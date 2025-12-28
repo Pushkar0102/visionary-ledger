@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { StatCard } from './StatCard';
+import { FileUpload } from './FileUpload';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -65,15 +66,18 @@ export function Dashboard() {
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowCharts(!showCharts)}
-          className="flex items-center gap-2"
-        >
-          <BarChart3 className="w-4 h-4" />
-          {showCharts ? 'Hide Charts' : 'Charts'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <FileUpload />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowCharts(!showCharts)}
+            className="flex items-center gap-2"
+          >
+            <BarChart3 className="w-4 h-4" />
+            {showCharts ? 'Hide Charts' : 'Charts'}
+          </Button>
+        </div>
       </div>
 
       {/* Primary Stats */}
