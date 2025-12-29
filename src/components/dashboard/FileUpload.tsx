@@ -1,12 +1,11 @@
 import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Card, CardContent } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Upload, FileSpreadsheet, FileText, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
+import { Upload, FileSpreadsheet, FileText, Loader2, CheckCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,12 +17,15 @@ interface ExtractedPatient {
   patient_name: string;
   age: number;
   sex: 'Male' | 'Female' | 'Other';
+  eb_number?: string;
   address?: string;
   contact_numbers?: string[];
   diagnosis?: string;
   diagnosis_eye?: 'RE' | 'LE';
-  surgery_type?: string;
+  surgical_plan?: string;
   surgery_eye?: 'RE' | 'LE';
+  iol_option?: string;
+  operation_date?: string;
   surgeon_name?: string;
   remarks?: string;
   selected?: boolean;
@@ -73,9 +75,15 @@ export function FileUpload() {
       if (fileType === 'excel') {
         const arrayBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        fileContent = XLSX.utils.sheet_to_csv(sheet);
+        
+        // Process ALL sheets in the workbook
+        const allSheetsContent: string[] = [];
+        workbook.SheetNames.forEach((sheetName, index) => {
+          const sheet = workbook.Sheets[sheetName];
+          const sheetCsv = XLSX.utils.sheet_to_csv(sheet);
+          allSheetsContent.push(`=== SHEET ${index + 1}: ${sheetName} ===\n${sheetCsv}`);
+        });
+        fileContent = allSheetsContent.join('\n\n');
       } else {
         fileContent = await file.text();
       }
@@ -120,13 +128,17 @@ export function FileUpload() {
             patient_name: patient.patient_name,
             age: patient.age,
             sex: patient.sex,
+            eb_number: patient.eb_number || null,
             address: patient.address || null,
             contact_numbers: patient.contact_numbers || [],
             diagnosis: patient.diagnosis || null,
             diagnosis_eye: patient.diagnosis_eye || null,
-            surgery_type: patient.surgery_type as any || null,
+            surgery_type: patient.surgical_plan as any || null,
             surgery_eye: patient.surgery_eye || null,
+            iol_option: patient.iol_option as any || null,
+            operation_date: patient.operation_date || null,
             surgeon_name: patient.surgeon_name || null,
+            is_operated: !!patient.operation_date,
             remarks: patient.remarks || null,
             created_by: user?.id || null,
           });
@@ -159,7 +171,6 @@ export function FileUpload() {
           
           if (donorError) throw donorError;
           
-          // Create donor eyes
           await supabase.from('donor_eyes').insert([
             { donor_id: donorData.id, eye_number: eyeNumberLeft, eye_side: 'LE' as const },
             { donor_id: donorData.id, eye_number: eyeNumberRight, eye_side: 'RE' as const }
@@ -201,6 +212,12 @@ export function FileUpload() {
     }
   };
 
+  const selectedCount = dataType === 'patients' 
+    ? extractedPatients.filter(p => p.selected).length 
+    : extractedDonors.filter(d => d.selected).length;
+
+  const totalCount = dataType === 'patients' ? extractedPatients.length : extractedDonors.length;
+
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setIsOpen(true)} className="flex items-center gap-2">
@@ -209,7 +226,7 @@ export function FileUpload() {
       </Button>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-[95vw] w-full max-h-[95vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Upload className="w-5 h-5" />
@@ -222,7 +239,7 @@ export function FileUpload() {
               <div className="space-y-2">
                 <label className="text-sm font-medium">Data Type</label>
                 <Select value={dataType} onValueChange={(v: DataType) => setDataType(v)}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-48">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -238,7 +255,7 @@ export function FileUpload() {
                     {isAnalyzing ? (
                       <>
                         <Loader2 className="w-12 h-12 text-primary animate-spin" />
-                        <p className="text-muted-foreground">Analyzing file with AI...</p>
+                        <p className="text-muted-foreground">Analyzing all sheets with AI...</p>
                       </>
                     ) : (
                       <>
@@ -248,7 +265,7 @@ export function FileUpload() {
                         </div>
                         <p className="text-muted-foreground text-center">
                           Upload an Excel (.xlsx) or text file<br />
-                          AI will extract {dataType} data automatically
+                          AI will analyze ALL sheets and extract {dataType} data
                         </p>
                         <input
                           ref={fileInputRef}
@@ -267,18 +284,13 @@ export function FileUpload() {
               </Card>
             </div>
           ) : (
-            <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="flex items-center justify-between py-2">
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <div className="flex items-center justify-between py-2 flex-shrink-0">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <CheckCircle className="w-4 h-4 text-green-500" />
                   <span>{fileName}</span>
                   <span>•</span>
-                  <span>
-                    {dataType === 'patients' 
-                      ? `${extractedPatients.filter(p => p.selected).length}/${extractedPatients.length} selected`
-                      : `${extractedDonors.filter(d => d.selected).length}/${extractedDonors.length} selected`
-                    }
-                  </span>
+                  <span>{selectedCount}/{totalCount} selected</span>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="ghost" size="sm" onClick={() => toggleAll(true)}>Select All</Button>
@@ -286,23 +298,39 @@ export function FileUpload() {
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 border rounded-md">
+              {/* Horizontally and vertically scrollable table */}
+              <div className="flex-1 border rounded-md overflow-auto min-h-0">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
-                      <TableHead className="w-12"></TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Age</TableHead>
-                      <TableHead>Sex</TableHead>
+                      <TableHead className="w-12 sticky left-0 bg-background z-20"></TableHead>
+                      <TableHead className="sticky left-12 bg-background z-20 min-w-[150px]">Name</TableHead>
+                      <TableHead className="min-w-[60px]">Age</TableHead>
+                      <TableHead className="min-w-[80px]">Sex</TableHead>
                       {dataType === 'patients' ? (
                         <>
-                          <TableHead>Diagnosis</TableHead>
-                          <TableHead>Surgery</TableHead>
+                          <TableHead className="min-w-[100px]">EB Number</TableHead>
+                          <TableHead className="min-w-[200px]">Address</TableHead>
+                          <TableHead className="min-w-[150px]">Contact Numbers</TableHead>
+                          <TableHead className="min-w-[150px]">Diagnosis</TableHead>
+                          <TableHead className="min-w-[80px]">Diag. Eye</TableHead>
+                          <TableHead className="min-w-[120px]">Surgical Plan</TableHead>
+                          <TableHead className="min-w-[80px]">Surg. Eye</TableHead>
+                          <TableHead className="min-w-[100px]">IOL Option</TableHead>
+                          <TableHead className="min-w-[120px]">Operation Date</TableHead>
+                          <TableHead className="min-w-[150px]">Surgeon Name</TableHead>
+                          <TableHead className="min-w-[150px]">Remarks</TableHead>
                         </>
                       ) : (
                         <>
-                          <TableHead>Cause of Death</TableHead>
-                          <TableHead>Retrieval Date</TableHead>
+                          <TableHead className="min-w-[150px]">Cause of Death</TableHead>
+                          <TableHead className="min-w-[120px]">Retrieval Date</TableHead>
+                          <TableHead className="min-w-[80px]">D-R Hours</TableHead>
+                          <TableHead className="min-w-[80px]">D-R Mins</TableHead>
+                          <TableHead className="min-w-[120px]">Eye No. Left</TableHead>
+                          <TableHead className="min-w-[120px]">Eye No. Right</TableHead>
+                          <TableHead className="min-w-[200px]">Address</TableHead>
+                          <TableHead className="min-w-[150px]">Source</TableHead>
                         </>
                       )}
                     </TableRow>
@@ -311,57 +339,70 @@ export function FileUpload() {
                     {dataType === 'patients' 
                       ? extractedPatients.map((patient, index) => (
                           <TableRow key={index} className={!patient.selected ? 'opacity-50' : ''}>
-                            <TableCell>
+                            <TableCell className="sticky left-0 bg-background">
                               <Checkbox 
                                 checked={patient.selected} 
                                 onCheckedChange={() => toggleSelection(index)} 
                               />
                             </TableCell>
-                            <TableCell className="font-medium">{patient.patient_name}</TableCell>
+                            <TableCell className="sticky left-12 bg-background font-medium">{patient.patient_name}</TableCell>
                             <TableCell>{patient.age}</TableCell>
                             <TableCell>{patient.sex}</TableCell>
+                            <TableCell>{patient.eb_number || '-'}</TableCell>
+                            <TableCell className="max-w-[200px] truncate" title={patient.address}>{patient.address || '-'}</TableCell>
+                            <TableCell>{patient.contact_numbers?.join(', ') || '-'}</TableCell>
                             <TableCell>{patient.diagnosis || '-'}</TableCell>
-                            <TableCell>{patient.surgery_type || '-'}</TableCell>
+                            <TableCell>{patient.diagnosis_eye || '-'}</TableCell>
+                            <TableCell>{patient.surgical_plan || '-'}</TableCell>
+                            <TableCell>{patient.surgery_eye || '-'}</TableCell>
+                            <TableCell>{patient.iol_option || '-'}</TableCell>
+                            <TableCell>{patient.operation_date || '-'}</TableCell>
+                            <TableCell>{patient.surgeon_name || '-'}</TableCell>
+                            <TableCell className="max-w-[150px] truncate" title={patient.remarks}>{patient.remarks || '-'}</TableCell>
                           </TableRow>
                         ))
                       : extractedDonors.map((donor, index) => (
                           <TableRow key={index} className={!donor.selected ? 'opacity-50' : ''}>
-                            <TableCell>
+                            <TableCell className="sticky left-0 bg-background">
                               <Checkbox 
                                 checked={donor.selected} 
                                 onCheckedChange={() => toggleSelection(index)} 
                               />
                             </TableCell>
-                            <TableCell className="font-medium">{donor.donor_name}</TableCell>
+                            <TableCell className="sticky left-12 bg-background font-medium">{donor.donor_name}</TableCell>
                             <TableCell>{donor.age}</TableCell>
                             <TableCell>{donor.sex}</TableCell>
                             <TableCell>{donor.cause_of_death || '-'}</TableCell>
                             <TableCell>{donor.retrieval_date || '-'}</TableCell>
+                            <TableCell>{donor.death_to_retrieval_hours ?? '-'}</TableCell>
+                            <TableCell>{donor.death_to_retrieval_minutes ?? '-'}</TableCell>
+                            <TableCell>{donor.eye_number_left || '-'}</TableCell>
+                            <TableCell>{donor.eye_number_right || '-'}</TableCell>
+                            <TableCell className="max-w-[200px] truncate" title={donor.address}>{donor.address || '-'}</TableCell>
+                            <TableCell>{donor.source_of_awareness || '-'}</TableCell>
                           </TableRow>
                         ))
                     }
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
 
-              <DialogFooter className="pt-4">
+              {/* Import button at the end of table area */}
+              <div className="flex items-center justify-between pt-4 flex-shrink-0 border-t mt-2">
                 <Button variant="outline" onClick={() => { setShowPreview(false); setExtractedPatients([]); setExtractedDonors([]); }}>
                   Upload Different File
                 </Button>
-                <Button onClick={handleSaveData} disabled={isSaving}>
+                <Button onClick={handleSaveData} disabled={isSaving || selectedCount === 0} size="lg">
                   {isSaving ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
+                      Importing...
                     </>
                   ) : (
-                    `Import ${dataType === 'patients' 
-                      ? extractedPatients.filter(p => p.selected).length 
-                      : extractedDonors.filter(d => d.selected).length
-                    } Records`
+                    `Import ${selectedCount} Records`
                   )}
                 </Button>
-              </DialogFooter>
+              </div>
             </div>
           )}
         </DialogContent>

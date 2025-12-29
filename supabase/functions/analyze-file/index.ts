@@ -25,26 +25,38 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
+    console.log(`Analyzing ${dataType} data from ${fileType} file, content length: ${fileContent.length}`);
+
     const systemPrompt = dataType === "patients" 
-      ? `You are a data extraction assistant for a medical eye bank system. Extract patient data from the provided file content.
+      ? `You are a data extraction assistant for a medical eye bank system. Extract patient data from the provided file content which may contain data from multiple sheets.
          
-         For each patient, extract:
-         - patient_name (string, required)
+         For each patient entry, extract ALL of these fields:
+         - patient_name (string, required - the patient's full name)
          - age (number, required)
          - sex (one of: "Male", "Female", "Other")
-         - address (string, optional)
-         - contact_numbers (array of strings, optional)
-         - diagnosis (string, optional - e.g., "Corneal Opacity", "Keratoconus", etc.)
-         - diagnosis_eye (one of: "RE", "LE" or null)
-         - surgery_type (one of: "PK", "Tectonic PK", "TPK", "DSAEK", "DALK", "DMEK", "Others" or null)
-         - surgery_eye (one of: "RE", "LE" or null)
-         - surgeon_name (string, optional)
-         - remarks (string, optional)
+         - eb_number (string, optional - Cornea clinic registration number, may be labeled as EB No., EB number, or similar)
+         - address (string, optional - full address)
+         - contact_numbers (array of strings - extract ALL phone numbers found for this patient)
+         - diagnosis (string, optional - e.g., "Corneal Opacity", "Keratoconus", "Pseudophakic Bullous Keratopathy", etc.)
+         - diagnosis_eye (one of: "RE" for Right Eye, "LE" for Left Eye, or null)
+         - surgical_plan (string, optional - one of: "PK", "Tectonic PK", "TPK", "DSAEK", "DALK", "DMEK", "Others" - the planned surgery type)
+         - surgery_eye (one of: "RE" for Right Eye, "LE" for Left Eye, or null)
+         - iol_option (string, optional - one of: "with IOL", "without IOL", "±IOL")
+         - operation_date (string in YYYY-MM-DD format, optional - the date when surgery was performed)
+         - surgeon_name (string, optional - name of the surgeon who performed/will perform the surgery)
+         - remarks (string, optional - any additional notes)
          
-         Return a JSON object with a "patients" array containing the extracted data.
-         If a field is missing or unclear, use null.
-         Be precise and extract all rows/entries you can find.`
-      : `You are a data extraction assistant for a medical eye bank system. Extract donor data from the provided file content.
+         IMPORTANT:
+         - Extract ALL entries from ALL sheets provided
+         - Extract ALL contact numbers for each patient (multiple numbers should be in the array)
+         - Look for variations in column headers (e.g., "Pt. Name", "Patient Name", "Name")
+         - Look for EB number variations: "EB No.", "EB Number", "Cornea Clinic No."
+         - Look for WL number variations: "WL No.", "Waiting List", "WL Number"
+         - Parse dates correctly to YYYY-MM-DD format
+         - If surgery details include date and surgeon, extract them separately
+         
+         Return a JSON object with a "patients" array containing ALL extracted entries.`
+      : `You are a data extraction assistant for a medical eye bank system. Extract donor data from the provided file content which may contain data from multiple sheets.
          
          For each donor, extract:
          - donor_name (string, required)
@@ -59,9 +71,8 @@ serve(async (req) => {
          - address (string, optional)
          - source_of_awareness (string, optional)
          
-         Return a JSON object with a "donors" array containing the extracted data.
-         If a field is missing or unclear, use null.
-         Be precise and extract all rows/entries you can find.`;
+         IMPORTANT: Extract ALL entries from ALL sheets provided.
+         Return a JSON object with a "donors" array containing ALL extracted entries.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -73,7 +84,7 @@ serve(async (req) => {
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Extract ${dataType} data from this ${fileType} content:\n\n${fileContent}` }
+          { role: "user", content: `Extract ${dataType} data from this ${fileType} content (may contain multiple sheets):\n\n${fileContent}` }
         ],
         tools: [
           {
@@ -93,12 +104,15 @@ serve(async (req) => {
                             patient_name: { type: "string" },
                             age: { type: "number" },
                             sex: { type: "string", enum: ["Male", "Female", "Other"] },
+                            eb_number: { type: "string" },
                             address: { type: "string" },
                             contact_numbers: { type: "array", items: { type: "string" } },
                             diagnosis: { type: "string" },
                             diagnosis_eye: { type: "string", enum: ["RE", "LE"] },
-                            surgery_type: { type: "string", enum: ["PK", "Tectonic PK", "TPK", "DSAEK", "DALK", "DMEK", "Others"] },
+                            surgical_plan: { type: "string", enum: ["PK", "Tectonic PK", "TPK", "DSAEK", "DALK", "DMEK", "Others"] },
                             surgery_eye: { type: "string", enum: ["RE", "LE"] },
+                            iol_option: { type: "string", enum: ["with IOL", "without IOL", "±IOL"] },
+                            operation_date: { type: "string" },
                             surgeon_name: { type: "string" },
                             remarks: { type: "string" }
                           },
@@ -167,6 +181,7 @@ serve(async (req) => {
     }
 
     const extractedData = JSON.parse(toolCall.function.arguments);
+    console.log(`Extracted ${dataType === 'patients' ? extractedData.patients?.length : extractedData.donors?.length} records`);
     
     return new Response(
       JSON.stringify({ success: true, data: extractedData }),
