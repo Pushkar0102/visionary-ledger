@@ -11,28 +11,40 @@ export async function analyzePatientData(
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const prompt = `
-You are a medical data extraction AI. Analyze the following text from ${source} and extract patient information.
+You are a medical data extraction AI specializing in ophthalmology patient records. Analyze the following text from ${source} and extract ALL patient information entries.
 
 Text to analyze:
 ${text}
 
-Extract the following information for EACH patient entry found:
-- Patient Name (full name)
-- Age (numeric value)
-- Sex/Gender (Male/Female/Other)
-- EB Number (Eye Bank number if present)
-- Address (complete address)
-- Contact Numbers (ALL phone numbers found - extract as array)
-- Diagnosis (eye diagnosis, include eye designation RE/LE if mentioned)
-- Diagnosis for second eye if bilateral (include eye designation)
-- Surgical Plan (surgery type like PK, DALK, DSAEK, etc.)
-- Surgery Eye (RE or LE)
-- IOL Option (with IOL, without IOL, ±IOL)
-- Date of Surgery (if mentioned)
-- Surgeon Name (if mentioned)
-- Any remarks or additional notes
+FOR EACH PATIENT ENTRY, extract the following information:
 
-RETURN ONLY A VALID JSON ARRAY with the following structure:
+1. Patient Name (full name)
+2. Age (numeric value only)
+3. Sex/Gender (Male/Female/Other)
+4. EB Number (Eye Bank registration number if present)
+5. Address (complete address with all details)
+6. Contact Numbers (extract ALL phone numbers found for this patient as an array)
+7. Diagnosis with Eye (e.g., "RE: Corneal Opacity" or "LE: Keratoconus")
+   - diagnosis_eye: "RE" or "LE" or "BE" (both eyes)
+   - diagnosis: the actual diagnosis text
+8. Second Eye Diagnosis if bilateral condition
+   - diagnosis_eye_left: "RE" or "LE"
+   - diagnosis_left: diagnosis for other eye
+9. Surgical Plan (the planned surgery like PK, DALK, DSAEK, TPK, etc.)
+10. Surgery Eye (RE or LE or BE for both eyes)
+11. IOL Option (with IOL, without IOL, ±IOL)
+12. Date of Surgery (extract in format: DD/MM/YYYY or as mentioned)
+13. Surgeon Name (name of the surgeon who performed/will perform surgery)
+14. Remarks (any additional notes, complications, special instructions)
+
+CRITICAL INSTRUCTIONS:
+- Analyze EACH entry thoroughly and extract ALL entries from the text
+- For contact numbers, extract ALL phone numbers mentioned for each patient
+- If surgery details mention "done by Dr. X on date Y", extract both surgeon_name and surgery_date
+- Be thorough - don't miss any patient entries
+- Maintain accuracy of medical terminology
+
+RETURN ONLY A VALID JSON ARRAY with this exact structure:
 [
   {
     "patient_name": "string",
@@ -40,13 +52,13 @@ RETURN ONLY A VALID JSON ARRAY with the following structure:
     "sex": "Male" | "Female" | "Other",
     "eb_number": "string",
     "address": "string",
-    "contact_numbers": ["string"],
-    "diagnosis_eye": "RE" | "LE",
+    "contact_numbers": ["string", "string"],
+    "diagnosis_eye": "RE" | "LE" | "BE",
     "diagnosis": "string",
     "diagnosis_eye_left": "RE" | "LE",
     "diagnosis_left": "string",
-    "surgery_eye": "RE" | "LE",
-    "surgery_type": "PK" | "Tectonic PK" | "TPK" | "DSAEK" | "DALK" | "DMEK" | "Others",
+    "surgery_eye": "RE" | "LE" | "BE",
+    "surgical_plan": "string",
     "surgery_custom": "string",
     "iol_option": "with IOL" | "without IOL" | "±IOL",
     "surgery_date": "string",
@@ -56,11 +68,10 @@ RETURN ONLY A VALID JSON ARRAY with the following structure:
 ]
 
 IMPORTANT:
-- Return ONLY the JSON array, no other text
-- If a field is not found, use null or empty string
-- Extract ALL contact numbers for each patient
-- Be thorough in extracting all patient entries
-- Maintain data accuracy
+- Return ONLY the JSON array, no other text or markdown
+- If a field is not found, use null for nullable fields or empty string ""
+- Extract ALL contact numbers for each patient into the array
+- Be thorough in extracting all patient entries from the text
 `;
 
     const result = await model.generateContent(prompt);
@@ -72,9 +83,15 @@ IMPORTANT:
     
     // Remove markdown code blocks if present
     if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
     } else if (jsonText.startsWith('```')) {
       jsonText = jsonText.replace(/```\n?/g, '');
+    }
+    
+    // Remove any trailing text after the JSON array
+    const arrayEndIndex = jsonText.lastIndexOf(']');
+    if (arrayEndIndex !== -1) {
+      jsonText = jsonText.substring(0, arrayEndIndex + 1);
     }
     
     // Parse the JSON
@@ -95,7 +112,7 @@ IMPORTANT:
       diagnosis_eye_left: patient.diagnosis_eye_left || null,
       diagnosis_left: patient.diagnosis_left || '',
       surgery_eye: patient.surgery_eye || null,
-      surgery_type: patient.surgery_type || null,
+      surgical_plan: patient.surgical_plan || '',
       surgery_custom: patient.surgery_custom || '',
       iol_option: patient.iol_option || null,
       surgery_date: patient.surgery_date || '',
@@ -104,6 +121,6 @@ IMPORTANT:
     }));
   } catch (error) {
     console.error('Error analyzing patient data:', error);
-    throw new Error('Failed to analyze patient data with AI');
+    throw new Error('Failed to analyze patient data with AI. Please check your API key and try again.');
   }
 }

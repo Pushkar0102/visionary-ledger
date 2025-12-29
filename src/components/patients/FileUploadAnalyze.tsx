@@ -63,19 +63,29 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
     
     const allData: ExtractedPatientData[] = [];
     
-    // Process all sheets
-    for (const sheetName of workbook.SheetNames) {
+    toast.info(`Processing ${workbook.SheetNames.length} sheet(s)...`);
+    
+    // Process all sheets sequentially
+    for (let i = 0; i < workbook.SheetNames.length; i++) {
+      const sheetName = workbook.SheetNames[i];
       const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
       
-      // Convert to text for AI analysis
+      // Convert to text for AI analysis with better formatting
       const sheetText = jsonData
+        .filter((row: any) => row.some((cell: any) => cell !== ''))
         .map((row: any) => row.join(' | '))
         .join('\n');
       
-      // Analyze each sheet with AI
-      const extractedPatients = await analyzePatientData(sheetText, sheetName);
-      allData.push(...extractedPatients);
+      if (sheetText.trim().length > 0) {
+        toast.info(`Analyzing sheet: ${sheetName}...`);
+        
+        // Analyze each sheet with AI
+        const extractedPatients = await analyzePatientData(sheetText, sheetName);
+        allData.push(...extractedPatients);
+        
+        toast.success(`Sheet "${sheetName}" analyzed: ${extractedPatients.length} patient(s) found`);
+      }
     }
     
     setExtractedData(allData);
@@ -95,21 +105,30 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
       
       const allData: ExtractedPatientData[] = [];
       
+      toast.info(`Processing ${pdf.numPages} page(s)...`);
+      
       // Process all pages
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        toast.info(`Analyzing page ${pageNum} of ${pdf.numPages}...`);
+        
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         const pageText = textContent.items
           .map((item: any) => item.str)
           .join(' ');
         
-        // Analyze each page with AI
-        const extractedPatients = await analyzePatientData(pageText, `Page ${pageNum}`);
-        allData.push(...extractedPatients);
+        if (pageText.trim().length > 0) {
+          // Analyze each page with AI
+          const extractedPatients = await analyzePatientData(pageText, `Page ${pageNum}`);
+          allData.push(...extractedPatients);
+          
+          toast.success(`Page ${pageNum} analyzed: ${extractedPatients.length} patient(s) found`);
+        }
       }
       
       setExtractedData(allData);
     } catch (error) {
+      console.error('PDF analysis error:', error);
       toast.error('PDF analysis requires additional setup. Please use Excel files for now.');
       throw error;
     }
@@ -177,14 +196,24 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
             )}
           </div>
 
-          <div className="text-sm text-muted-foreground">
-            <p className="font-medium mb-2">Instructions:</p>
+          <div className="text-sm text-muted-foreground bg-muted/50 p-4 rounded-lg">
+            <p className="font-medium mb-2">Workflow Instructions:</p>
             <ul className="list-disc list-inside space-y-1">
-              <li>Upload Excel (.xlsx, .xls) or PDF file containing patient data</li>
-              <li>All sheets/pages will be analyzed automatically</li>
-              <li>AI will extract: Name, Age, Sex, EB Number, Address, Contact Numbers, Diagnosis, Surgery Details</li>
-              <li>Review extracted data in the table below</li>
-              <li>Click Import to add patients to the database</li>
+              <li>Upload an Excel (.xlsx, .xls) or PDF file containing patient data</li>
+              <li>All sheets (Excel) or pages (PDF) will be analyzed automatically</li>
+              <li>AI will extract the following for each patient:
+                <ul className="list-circle list-inside ml-6 mt-1 space-y-0.5">
+                  <li>Patient Name, Age, Sex</li>
+                  <li>EB Number</li>
+                  <li>Address</li>
+                  <li>All Contact Numbers</li>
+                  <li>Diagnosis (with eye designation)</li>
+                  <li>Surgical Plan (surgery type and details)</li>
+                  <li>Surgery Date and Surgeon Name (if mentioned)</li>
+                </ul>
+              </li>
+              <li>Review extracted data in the horizontally and vertically scrollable table</li>
+              <li>Click "Import to Database" button to add patients</li>
             </ul>
           </div>
         </CardContent>
@@ -194,7 +223,7 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg">
-              Extracted Data ({extractedData.length} patients found)
+              Extracted Data ({extractedData.length} patient{extractedData.length !== 1 ? 's' : ''} found)
             </CardTitle>
             <Button onClick={handleImport} className="gap-2">
               <Download className="w-4 h-4" />
