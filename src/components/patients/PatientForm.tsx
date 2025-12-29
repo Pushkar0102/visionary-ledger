@@ -442,7 +442,7 @@ export function PatientForm({ onBack, onSuccess }: PatientFormProps) {
                 name="surgery_type"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Surgery Type</FormLabel>
+                    <FormLabel>Surgical Plan</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
