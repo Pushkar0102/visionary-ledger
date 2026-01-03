@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -24,11 +25,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ArrowLeft, Eye, Edit, Loader2, Calendar, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Eye, Edit, Loader2, Calendar, Filter, ChevronLeft, ChevronRight, Mail, Sparkles, Copy } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { PatientEditForm } from './PatientEditForm';
+import { generateThankYouEmail } from '@/lib/aiAnalyzer';
 import type { Patient } from '@/types/database';
 
 interface PatientListProps {
@@ -60,6 +62,9 @@ export function PatientList({ onBack }: PatientListProps) {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
+  const [generatedEmail, setGeneratedEmail] = useState('');
+  const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -122,6 +127,33 @@ export function PatientList({ onBack }: PatientListProps) {
     setIsEditOpen(false);
     setSelectedPatient(null);
     fetchPatients();
+  };
+
+  const handleGenerateEmail = async (patient: Patient) => {
+    setSelectedPatient(patient);
+    setIsEmailDialogOpen(true);
+    setIsGeneratingEmail(true);
+    setGeneratedEmail('');
+    
+    try {
+      const email = await generateThankYouEmail(
+        patient.patient_name,
+        'Anonymous Donor',
+        patient.surgery_type || 'corneal transplant',
+        patient.surgeon_name || 'our surgical team'
+      );
+      setGeneratedEmail(email);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to generate email');
+      setIsEmailDialogOpen(false);
+    } finally {
+      setIsGeneratingEmail(false);
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(generatedEmail);
+    toast.success('Email copied to clipboard');
   };
 
   return (
@@ -329,10 +361,20 @@ export function PatientList({ onBack }: PatientListProps) {
                   <p className="font-medium">{selectedPatient.remarks || '-'}</p>
                 </div>
               </div>
-              <Button onClick={() => { setIsViewOpen(false); handleEdit(selectedPatient); }} className="w-full">
-                <Edit className="w-4 h-4 mr-2" />
-                Edit Patient
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={() => { setIsViewOpen(false); handleEdit(selectedPatient); }} className="flex-1">
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit Patient
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setIsViewOpen(false); handleGenerateEmail(selectedPatient); }}
+                  className="flex-1"
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Generate Thank You Email
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -346,6 +388,45 @@ export function PatientList({ onBack }: PatientListProps) {
           </DialogHeader>
           {selectedPatient && (
             <PatientEditForm patient={selectedPatient} onSuccess={handleEditSuccess} onCancel={() => setIsEditOpen(false)} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Email Generation Dialog */}
+      <Dialog open={isEmailDialogOpen} onOpenChange={setIsEmailDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="w-5 h-5" />
+              AI Generated Thank You Email
+            </DialogTitle>
+          </DialogHeader>
+          {isGeneratingEmail ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-muted-foreground">Generating personalized email...</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                Generated for: <span className="font-medium text-foreground">{selectedPatient?.patient_name}</span>
+              </div>
+              <Textarea
+                value={generatedEmail}
+                onChange={(e) => setGeneratedEmail(e.target.value)}
+                className="min-h-[300px] text-sm"
+                placeholder="Email content will appear here..."
+              />
+              <div className="flex gap-2">
+                <Button onClick={copyToClipboard} className="flex-1">
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy to Clipboard
+                </Button>
+                <Button variant="outline" onClick={() => setIsEmailDialogOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>

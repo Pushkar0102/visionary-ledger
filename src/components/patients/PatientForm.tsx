@@ -47,6 +47,7 @@ const patientSchema = z.object({
   age: z.number().min(0, 'Age must be positive').max(150, 'Invalid age'),
   sex: z.enum(['Male', 'Female', 'Other'] as const),
   address: z.string().max(500).optional(),
+  email: z.string().email('Invalid email').optional().or(z.literal('')),
   contact_numbers: z.array(z.object({
     number: z.string().regex(/^[0-9]{10}$/, 'Must be 10 digits')
   })).min(1, 'At least one contact number required'),
@@ -76,6 +77,7 @@ export function PatientForm({ onBack, onSuccess }: PatientFormProps) {
       age: undefined,
       sex: undefined,
       address: '',
+      email: '',
       contact_numbers: [{ number: '' }],
       eb_number: '',
       diagnosis_eye: undefined,
@@ -108,6 +110,7 @@ export function PatientForm({ onBack, onSuccess }: PatientFormProps) {
         age: data.age,
         sex: data.sex as SexType,
         address: data.address || null,
+        email: data.email || null,
         contact_numbers: contactNumbers,
         eb_number: data.eb_number || null,
         diagnosis_eye: (data.diagnosis_eye as EyeType) || null,
@@ -225,6 +228,20 @@ export function PatientForm({ onBack, onSuccess }: PatientFormProps) {
                     <FormLabel>EB Number</FormLabel>
                     <FormControl>
                       <Input placeholder="Eye Bank number" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" placeholder="patient@email.com" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

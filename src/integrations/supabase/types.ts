@@ -108,6 +108,7 @@ export type Database = {
           death_to_retrieval_hours: number | null
           death_to_retrieval_minutes: number | null
           donor_name: string
+          email: string | null
           eye_number_left: string
           eye_number_right: string
           id: string
@@ -126,6 +127,7 @@ export type Database = {
           death_to_retrieval_hours?: number | null
           death_to_retrieval_minutes?: number | null
           donor_name: string
+          email?: string | null
           eye_number_left: string
           eye_number_right: string
           id?: string
@@ -144,6 +146,7 @@ export type Database = {
           death_to_retrieval_hours?: number | null
           death_to_retrieval_minutes?: number | null
           donor_name?: string
+          email?: string | null
           eye_number_left?: string
           eye_number_right?: string
           id?: string
@@ -193,6 +196,7 @@ export type Database = {
           diagnosis_left: string | null
           donor_eye_id: string | null
           eb_number: string | null
+          email: string | null
           id: string
           iol_option: Database["public"]["Enums"]["iol_option"] | null
           is_operated: boolean | null
@@ -220,6 +224,7 @@ export type Database = {
           diagnosis_left?: string | null
           donor_eye_id?: string | null
           eb_number?: string | null
+          email?: string | null
           id?: string
           iol_option?: Database["public"]["Enums"]["iol_option"] | null
           is_operated?: boolean | null
@@ -247,6 +252,7 @@ export type Database = {
           diagnosis_left?: string | null
           donor_eye_id?: string | null
           eb_number?: string | null
+          email?: string | null
           id?: string
           iol_option?: Database["public"]["Enums"]["iol_option"] | null
           is_operated?: boolean | null
