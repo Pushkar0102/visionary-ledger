@@ -39,6 +39,7 @@ const donorSchema = z.object({
   sex: z.enum(['Male', 'Female', 'Other'] as const),
   cause_of_death: z.string().max(200).optional(),
   address: z.string().max(500).optional(),
+  email: z.string().email('Invalid email').optional().or(z.literal('')),
   death_to_retrieval_hours: z.number().min(0).max(72).optional(),
   death_to_retrieval_minutes: z.number().min(0).max(59).optional(),
   eye_number_right: z.string().min(1, 'Right eye number is required').max(50),
@@ -61,6 +62,7 @@ export function DonorForm({ onBack, onSuccess }: DonorFormProps) {
       sex: undefined,
       cause_of_death: '',
       address: '',
+      email: '',
       death_to_retrieval_hours: 0,
       death_to_retrieval_minutes: 0,
       eye_number_right: '',
@@ -79,6 +81,7 @@ export function DonorForm({ onBack, onSuccess }: DonorFormProps) {
         sex: data.sex as SexType,
         cause_of_death: data.cause_of_death || null,
         address: data.address || null,
+        email: data.email || null,
         death_to_retrieval_hours: data.death_to_retrieval_hours || 0,
         death_to_retrieval_minutes: data.death_to_retrieval_minutes || 0,
         eye_number_right: data.eye_number_right,
@@ -203,10 +206,24 @@ export function DonorForm({ onBack, onSuccess }: DonorFormProps) {
                 control={form.control}
                 name="cause_of_death"
                 render={({ field }) => (
-                  <FormItem className="md:col-span-2">
+                  <FormItem>
                     <FormLabel>Cause of Death</FormLabel>
                     <FormControl>
                       <Input placeholder="Enter cause of death" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Family Contact Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" placeholder="family@email.com" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

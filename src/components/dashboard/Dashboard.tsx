@@ -14,6 +14,8 @@ import {
   ChevronUp,
   BarChart3,
   TrendingUp,
+  Database,
+  Loader2,
 } from 'lucide-react';
 import {
   BarChart,
@@ -31,6 +33,9 @@ import {
   Line,
 } from 'recharts';
 import { Skeleton } from '@/components/ui/skeleton';
+import { insertMockPatients, insertMockDonors } from '@/lib/mockData';
+import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 const CHART_COLORS = [
   'hsl(195, 70%, 40%)',
@@ -41,9 +46,30 @@ const CHART_COLORS = [
 ];
 
 export function Dashboard() {
-  const { data: stats, isLoading } = useDashboardStats();
+  const { data: stats, isLoading, refetch } = useDashboardStats();
+  const { isAdmin } = useAuth();
   const [isDetailedOpen, setIsDetailedOpen] = useState(false);
   const [showCharts, setShowCharts] = useState(false);
+  const [isSeedingData, setIsSeedingData] = useState(false);
+
+  const handleSeedMockData = async () => {
+    if (!confirm('This will add 100 mock patients and 100 mock donors. Continue?')) return;
+    
+    setIsSeedingData(true);
+    try {
+      const [patientResult, donorResult] = await Promise.all([
+        insertMockPatients(100),
+        insertMockDonors(100),
+      ]);
+      
+      toast.success(`Added ${patientResult.success} patients and ${donorResult.success} donors`);
+      refetch();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to seed data');
+    } finally {
+      setIsSeedingData(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -68,6 +94,18 @@ export function Dashboard() {
         <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
         <div className="flex items-center gap-2">
           <FileUpload />
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSeedMockData}
+              disabled={isSeedingData}
+              className="flex items-center gap-2"
+            >
+              {isSeedingData ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {isSeedingData ? 'Seeding...' : 'Seed Data'}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
