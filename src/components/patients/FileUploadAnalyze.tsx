@@ -82,37 +82,9 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
   };
 
   const analyzePDFFile = async (file: File) => {
-    // For PDF analysis, we'll use PDF.js or similar library
-    // This is a placeholder - you'll need to install pdfjs-dist
-    try {
-      const pdfjsLib = await import('pdfjs-dist');
-      
-      // Set worker source
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-      
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      
-      const allData: ExtractedPatientData[] = [];
-      
-      // Process all pages
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        
-        // Analyze each page with AI
-        const extractedPatients = await analyzePatientData(pageText, `Page ${pageNum}`);
-        allData.push(...extractedPatients);
-      }
-      
-      setExtractedData(allData);
-    } catch (error) {
-      toast.error('PDF analysis requires additional setup. Please use Excel files for now.');
-      throw error;
-    }
+    // PDF analysis is not supported in browser - show message
+    toast.error('PDF analysis is not supported. Please use Excel files (.xlsx, .xls).');
+    throw new Error('PDF analysis not supported');
   };
 
   const handleImport = () => {
