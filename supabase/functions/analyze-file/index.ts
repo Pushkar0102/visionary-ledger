@@ -179,20 +179,54 @@ serve(async (req) => {
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
     
     if (!toolCall) {
-      throw new Error("No data extracted from file");
+      console.error("No tool call in response:", JSON.stringify(data));
+      throw new Error("No data extracted from file - AI could not parse the content");
     }
 
-    const extractedData = JSON.parse(toolCall.function.arguments);
-    console.log(`Extracted ${dataType === 'patients' ? extractedData.patients?.length : extractedData.donors?.length} records`);
+    let extractedData;
+    try {
+      extractedData = JSON.parse(toolCall.function.arguments);
+    } catch (parseError) {
+      console.error("Failed to parse AI response:", toolCall.function.arguments);
+      throw new Error("Failed to parse extracted data from AI response");
+    }
+
+    // Validate extracted data
+    const records = dataType === 'patients' ? extractedData.patients : extractedData.donors;
+    if (!Array.isArray(records)) {
+      throw new Error("Invalid data format returned from AI");
+    }
+
+    const validRecords = records.filter((record: any) => {
+      if (dataType === 'patients') {
+        return record.patient_name && record.patient_name.trim() !== '' && record.age != null;
+      } else {
+        return record.donor_name && record.donor_name.trim() !== '' && record.age != null;
+      }
+    });
+
+    console.log(`Extracted ${validRecords.length} valid records out of ${records.length} total`);
+    
+    if (validRecords.length === 0) {
+      throw new Error("No valid records found in the file. Please check the file format.");
+    }
+
+    // Return validated data
+    const responseData = dataType === 'patients' 
+      ? { patients: validRecords }
+      : { donors: validRecords };
     
     return new Response(
-      JSON.stringify({ success: true, data: extractedData }),
+      JSON.stringify({ success: true, data: responseData }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error analyzing file:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to analyze file" }),
+      JSON.stringify({ 
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to analyze file" 
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
