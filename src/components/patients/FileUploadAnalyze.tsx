@@ -38,17 +38,36 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
     if (!file) return;
 
     setIsAnalyzing(true);
+    setExtractedData([]);
+    setAnalysisComplete(false);
+
+    const maxRetries = 3;
+
     try {
-      const fileExtension = file.name.split('.').pop()?.toLowerCase();
-      
-      if (fileExtension === 'pdf') {
-        await analyzePDFFile(file);
-      } else {
-        await analyzeExcelFile(file);
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const fileExtension = file.name.split('.').pop()?.toLowerCase();
+
+          if (fileExtension === 'pdf') {
+            await analyzePDFFile(file);
+          } else {
+            await analyzeExcelFile(file);
+          }
+
+          toast.success('File analyzed successfully!');
+          setAnalysisComplete(true);
+          return;
+        } catch (err: any) {
+          const msg = String(err?.message ?? err);
+          console.error(`Analysis attempt ${attempt} failed:`, err);
+
+          if (attempt === maxRetries) throw err;
+
+          const delay = 800 * attempt;
+          toast.warning(`Analysis failed, retrying... (${attempt}/${maxRetries})`);
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
-      
-      toast.success('File analyzed successfully!');
-      setAnalysisComplete(true);
     } catch (error: any) {
       console.error('Error analyzing file:', error);
       toast.error(error.message || 'Failed to analyze file');
@@ -59,32 +78,89 @@ export function FileUploadAnalyze({ onBack, onImport }: FileUploadAnalyzeProps) 
 
   const analyzeExcelFile = async (file: File) => {
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer);
-    
+    const workbook = XLSX.read(arrayBuffer, { cellDates: true, cellNF: false, raw: false });
+
     const allData: ExtractedPatientData[] = [];
-    
-    // Process all sheets
+
     for (const sheetName of workbook.SheetNames) {
       const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      
-      // Convert to text for AI analysis
-      const sheetText = jsonData
-        .map((row: any) => row.join(' | '))
-        .join('\n');
-      
-      // Analyze each sheet with AI
-      const extractedPatients = await analyzePatientData(sheetText, sheetName);
-      allData.push(...extractedPatients);
+
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, {
+        raw: false,
+        defval: '',
+        blankrows: false,
+      }) as Record<string, any>[];
+
+      if (jsonData.length === 0) {
+        console.warn(`Sheet "${sheetName}" is empty, skipping...`);
+        continue;
+      }
+
+      const headers = Object.keys(jsonData[0] || {});
+      const sheetText = [
+        `Sheet: ${sheetName}`,
+        `Headers: ${headers.join(' | ')}`,
+        '',
+        ...jsonData.map((row, idx) =>
+          `Row ${idx + 1}: ${headers.map((h) => `${h}: ${row[h] ?? ''}`).join(' | ')}`
+        ),
+      ].join('\n');
+
+      try {
+        const extractedPatients = await analyzePatientData(sheetText, sheetName);
+        const validated = extractedPatients.filter((p) => p.patient_name && p.patient_name.trim() !== '');
+        allData.push(...validated);
+      } catch (err) {
+        console.error(`Error analyzing sheet "${sheetName}":`, err);
+        toast.error(`Failed to analyze sheet "${sheetName}"`);
+      }
     }
-    
+
+    if (allData.length === 0) {
+      throw new Error('No valid patient data found in any sheet');
+    }
+
     setExtractedData(allData);
   };
 
   const analyzePDFFile = async (file: File) => {
-    // PDF analysis is not supported in browser - show message
-    toast.error('PDF analysis is not supported. Please use Excel files (.xlsx, .xls).');
-    throw new Error('PDF analysis not supported');
+    // Dynamic import keeps initial bundle smaller
+    const pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+    const allData: ExtractedPatientData[] = [];
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      const pageText = (textContent.items as any[])
+        .map((item: any) => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!pageText) continue;
+
+      const structuredText = [`Page: ${pageNum} of ${pdf.numPages}`, 'Content:', pageText].join('\n');
+
+      try {
+        const extractedPatients = await analyzePatientData(structuredText, `PDF Page ${pageNum}`);
+        const validated = extractedPatients.filter((p) => p.patient_name && p.patient_name.trim() !== '');
+        allData.push(...validated);
+      } catch (err) {
+        console.error(`Error analyzing page ${pageNum}:`, err);
+      }
+    }
+
+    if (allData.length === 0) {
+      throw new Error('No valid patient data found in PDF');
+    }
+
+    setExtractedData(allData);
   };
 
   const handleImport = () => {

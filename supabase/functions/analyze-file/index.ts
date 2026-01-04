@@ -13,12 +13,19 @@ serve(async (req) => {
   }
 
   try {
-    const { fileContent, fileType, dataType } = await req.json();
-    
+    const body = await req.json().catch(() => ({}));
+
+    // Backward compatible payloads:
+    // - New: { fileContent, fileType, dataType }
+    // - Old: { text, source }
+    const fileContent = body.fileContent ?? body.text;
+    const fileType = body.fileType ?? "text";
+    const dataType = body.dataType ?? "patients";
+
     if (!fileContent) {
       return new Response(
-        JSON.stringify({ error: "File content is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ success: false, error: "File content is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -27,7 +34,9 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`Analyzing ${dataType} data from ${fileType} file, content length: ${fileContent.length}`);
+    console.log(
+      `Analyzing ${dataType} data from ${fileType} file, content length: ${String(fileContent).length}`,
+    );
 
     const systemPrompt = dataType === "patients" 
       ? `You are a data extraction assistant for a medical eye bank system. Extract patient data from the provided file content which may contain data from multiple sheets.
@@ -158,21 +167,30 @@ serve(async (req) => {
     });
 
     if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+
       if (response.status === 429) {
         return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ success: false, error: "Rate limit exceeded. Please try again later." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
       if (response.status === 402) {
         return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add credits to continue." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ success: false, error: "AI credits exhausted. Please add credits to continue." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      const errorText = await response.text();
+
       console.error("AI gateway error:", response.status, errorText);
-      throw new Error("AI gateway error");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "AI gateway error",
+          details: { status: response.status, body: errorText.slice(0, 2000) },
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const data = await response.json();
@@ -211,14 +229,12 @@ serve(async (req) => {
       throw new Error("No valid records found in the file. Please check the file format.");
     }
 
-    // Return validated data
-    const responseData = dataType === 'patients' 
-      ? { patients: validRecords }
-      : { donors: validRecords };
-    
+    // Return validated data (also expose top-level array for backward compatibility)
+    const responseData = dataType === "patients" ? { patients: validRecords } : { donors: validRecords };
+
     return new Response(
-      JSON.stringify({ success: true, data: responseData }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ success: true, data: responseData, ...responseData }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
     console.error("Error analyzing file:", error);

@@ -66,93 +66,85 @@ export function FileUpload() {
   // Set PDF.js worker
   pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-  const extractExcelContent = async (file: File): Promise<string> => {
+  const extractExcelParts = async (file: File): Promise<Array<{ source: string; content: string }>> => {
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { 
+    const workbook = XLSX.read(arrayBuffer, {
       type: 'array',
       cellDates: true,
       cellNF: false,
-      raw: false
+      raw: false,
     });
-    
-    const allSheetsContent: string[] = [];
-    
+
+    const parts: Array<{ source: string; content: string }> = [];
+
     for (const sheetName of workbook.SheetNames) {
       const worksheet = workbook.Sheets[sheetName];
-      
-      // Convert to JSON with headers for better structure
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, {
         raw: false,
         defval: '',
-        blankrows: false
-      }) as Record<string, string>[];
-      
+        blankrows: false,
+      }) as Record<string, any>[];
+
       if (jsonData.length === 0) {
         console.warn(`Sheet "${sheetName}" is empty, skipping...`);
         continue;
       }
-      
-      // Get headers from the first row
+
       const headers = Object.keys(jsonData[0] || {});
-      
-      // Convert to structured text with clear header-value mapping
-      const sheetText = [
+
+      const content = [
         `=== SHEET: ${sheetName} ===`,
         `Headers: ${headers.join(' | ')}`,
         `Total Rows: ${jsonData.length}`,
         '',
-        ...jsonData.map((row, idx) => 
-          `Row ${idx + 1}: ${headers.map(h => `${h}: ${row[h] || ''}`).join(' | ')}`
-        )
+        ...jsonData.map((row, idx) =>
+          `Row ${idx + 1}: ${headers.map((h) => `${h}: ${row[h] ?? ''}`).join(' | ')}`
+        ),
       ].join('\n');
-      
-      console.log(`Processing sheet "${sheetName}" with ${jsonData.length} rows and ${headers.length} columns`);
-      allSheetsContent.push(sheetText);
+
+      console.log(`Prepared sheet "${sheetName}" with ${jsonData.length} rows and ${headers.length} columns`);
+      parts.push({ source: sheetName, content });
     }
-    
-    if (allSheetsContent.length === 0) {
-      throw new Error('No valid data found in any Excel sheet');
-    }
-    
-    return allSheetsContent.join('\n\n');
+
+    if (parts.length === 0) throw new Error('No valid data found in any Excel sheet');
+    return parts;
   };
 
-  const extractPdfContent = async (file: File): Promise<string> => {
+  const extractPdfParts = async (file: File): Promise<Array<{ source: string; content: string }>> => {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    
-    const allPagesContent: string[] = [];
-    const totalPages = pdf.numPages;
-    
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+
+    const parts: Array<{ source: string; content: string }> = [];
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
-      
-      // Extract text with positioning info
+
       const pageText = textContent.items
         .map((item: any) => item.str)
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      
+
       if (!pageText) {
         console.warn(`Page ${pageNum} is empty, skipping...`);
         continue;
       }
-      
-      allPagesContent.push([
-        `=== PAGE ${pageNum} of ${totalPages} ===`,
-        pageText
-      ].join('\n'));
-      
-      console.log(`Processed PDF page ${pageNum}/${totalPages}`);
+
+      parts.push({
+        source: `PDF Page ${pageNum}`,
+        content: [`=== PAGE ${pageNum} of ${pdf.numPages} ===`, pageText].join('\n'),
+      });
+
+      console.log(`Prepared PDF page ${pageNum}/${pdf.numPages}`);
     }
-    
-    if (allPagesContent.length === 0) {
+
+    if (parts.length === 0) {
       throw new Error('No readable text found in PDF. Please ensure the PDF contains selectable text.');
     }
-    
-    return allPagesContent.join('\n\n');
+
+    return parts;
   };
 
   const validateExtractedData = (data: any[], type: 'patients' | 'donors') => {
@@ -218,30 +210,39 @@ export function FileUpload() {
     setIsAnalyzing(true);
     
     try {
-      let fileContent = '';
-      
+      let parts: Array<{ source: string; content: string }> = [];
+
       if (isPdf) {
-        fileContent = await extractPdfContent(file);
+        parts = await extractPdfParts(file);
       } else if (isExcel) {
-        fileContent = await extractExcelContent(file);
+        parts = await extractExcelParts(file);
       } else {
-        fileContent = await file.text();
+        parts = [{ source: 'Text file', content: await file.text() }];
       }
 
-      console.log(`Extracted content length: ${fileContent.length} characters`);
-      
-      const data = await analyzeWithRetry(fileContent, fileType);
+      const totalChars = parts.reduce((sum, p) => sum + p.content.length, 0);
+      console.log(`Prepared ${parts.length} part(s), total length: ${totalChars} characters`);
+
+      const aggregated: any[] = [];
+
+      // Analyze part-by-part to keep requests smaller (reduces AI gateway failures)
+      for (const part of parts) {
+        const res = await analyzeWithRetry(part.content, isPdf ? 'pdf' : isExcel ? 'excel' : 'text');
+
+        const items = dataType === 'patients' ? res.data.patients || [] : res.data.donors || [];
+        aggregated.push(...items);
+      }
 
       if (dataType === 'patients') {
-        const validated = validateExtractedData(data.data.patients || [], 'patients');
+        const validated = validateExtractedData(aggregated, 'patients');
         setExtractedPatients(validated.map((p: ExtractedPatient) => ({ ...p, selected: true })));
         toast({ title: 'File analyzed', description: `Found ${validated.length} valid patient records` });
       } else {
-        const validated = validateExtractedData(data.data.donors || [], 'donors');
+        const validated = validateExtractedData(aggregated, 'donors');
         setExtractedDonors(validated.map((d: ExtractedDonor) => ({ ...d, selected: true })));
         toast({ title: 'File analyzed', description: `Found ${validated.length} valid donor records` });
       }
-      
+
       setShowPreview(true);
     } catch (error) {
       console.error('Error analyzing file:', error);
