@@ -5,11 +5,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Upload, FileSpreadsheet, FileText, Loader2, CheckCircle } from 'lucide-react';
+import { Upload, FileSpreadsheet, FileText, Loader2, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
 
 type DataType = 'patients' | 'donors';
 
@@ -59,59 +60,212 @@ export function FileUpload() {
   const [extractedDonors, setExtractedDonors] = useState<ExtractedDonor[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [fileName, setFileName] = useState('');
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  
+  // Set PDF.js worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+  const extractExcelContent = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { 
+      type: 'array',
+      cellDates: true,
+      cellNF: false,
+      raw: false
+    });
+    
+    const allSheetsContent: string[] = [];
+    
+    for (const sheetName of workbook.SheetNames) {
+      const worksheet = workbook.Sheets[sheetName];
+      
+      // Convert to JSON with headers for better structure
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+        raw: false,
+        defval: '',
+        blankrows: false
+      }) as Record<string, string>[];
+      
+      if (jsonData.length === 0) {
+        console.warn(`Sheet "${sheetName}" is empty, skipping...`);
+        continue;
+      }
+      
+      // Get headers from the first row
+      const headers = Object.keys(jsonData[0] || {});
+      
+      // Convert to structured text with clear header-value mapping
+      const sheetText = [
+        `=== SHEET: ${sheetName} ===`,
+        `Headers: ${headers.join(' | ')}`,
+        `Total Rows: ${jsonData.length}`,
+        '',
+        ...jsonData.map((row, idx) => 
+          `Row ${idx + 1}: ${headers.map(h => `${h}: ${row[h] || ''}`).join(' | ')}`
+        )
+      ].join('\n');
+      
+      console.log(`Processing sheet "${sheetName}" with ${jsonData.length} rows and ${headers.length} columns`);
+      allSheetsContent.push(sheetText);
+    }
+    
+    if (allSheetsContent.length === 0) {
+      throw new Error('No valid data found in any Excel sheet');
+    }
+    
+    return allSheetsContent.join('\n\n');
+  };
+
+  const extractPdfContent = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    const allPagesContent: string[] = [];
+    const totalPages = pdf.numPages;
+    
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      
+      // Extract text with positioning info
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (!pageText) {
+        console.warn(`Page ${pageNum} is empty, skipping...`);
+        continue;
+      }
+      
+      allPagesContent.push([
+        `=== PAGE ${pageNum} of ${totalPages} ===`,
+        pageText
+      ].join('\n'));
+      
+      console.log(`Processed PDF page ${pageNum}/${totalPages}`);
+    }
+    
+    if (allPagesContent.length === 0) {
+      throw new Error('No readable text found in PDF. Please ensure the PDF contains selectable text.');
+    }
+    
+    return allPagesContent.join('\n\n');
+  };
+
+  const validateExtractedData = (data: any[], type: 'patients' | 'donors') => {
+    return data.filter(item => {
+      if (type === 'patients') {
+        const isValid = item.patient_name && item.patient_name.trim() !== '' && item.age != null;
+        if (!isValid) console.warn('Skipping invalid patient:', item);
+        return isValid;
+      } else {
+        const isValid = item.donor_name && item.donor_name.trim() !== '' && item.age != null;
+        if (!isValid) console.warn('Skipping invalid donor:', item);
+        return isValid;
+      }
+    });
+  };
+
+  const analyzeWithRetry = async (fileContent: string, fileType: string, maxRetries = 3): Promise<any> => {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        setRetryCount(attempt);
+        
+        const { data, error } = await supabase.functions.invoke('analyze-file', {
+          body: { fileContent, fileType, dataType }
+        });
+
+        if (error) throw error;
+        if (!data.success) throw new Error(data.error);
+        
+        return data;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        console.error(`Analysis attempt ${attempt} failed:`, error);
+        
+        if (attempt < maxRetries) {
+          // Exponential backoff
+          const delay = 1000 * Math.pow(2, attempt - 1);
+          toast({ 
+            title: `Retrying... (${attempt}/${maxRetries})`, 
+            description: `Analysis failed, waiting ${delay/1000}s before retry`,
+          });
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError;
+  };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setFileName(file.name);
-    const fileType = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') ? 'excel' : 'text';
+    setAnalysisError(null);
+    setRetryCount(0);
+    
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    const fileType = isPdf ? 'pdf' : isExcel ? 'excel' : 'text';
     
     setIsAnalyzing(true);
     
     try {
       let fileContent = '';
       
-      if (fileType === 'excel') {
-        const arrayBuffer = await file.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        
-        // Process ALL sheets in the workbook
-        const allSheetsContent: string[] = [];
-        workbook.SheetNames.forEach((sheetName, index) => {
-          const sheet = workbook.Sheets[sheetName];
-          const sheetCsv = XLSX.utils.sheet_to_csv(sheet);
-          allSheetsContent.push(`=== SHEET ${index + 1}: ${sheetName} ===\n${sheetCsv}`);
-        });
-        fileContent = allSheetsContent.join('\n\n');
+      if (isPdf) {
+        fileContent = await extractPdfContent(file);
+      } else if (isExcel) {
+        fileContent = await extractExcelContent(file);
       } else {
         fileContent = await file.text();
       }
 
-      const { data, error } = await supabase.functions.invoke('analyze-file', {
-        body: { fileContent, fileType, dataType }
-      });
-
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error);
+      console.log(`Extracted content length: ${fileContent.length} characters`);
+      
+      const data = await analyzeWithRetry(fileContent, fileType);
 
       if (dataType === 'patients') {
-        setExtractedPatients((data.data.patients || []).map((p: ExtractedPatient) => ({ ...p, selected: true })));
+        const validated = validateExtractedData(data.data.patients || [], 'patients');
+        setExtractedPatients(validated.map((p: ExtractedPatient) => ({ ...p, selected: true })));
+        toast({ title: 'File analyzed', description: `Found ${validated.length} valid patient records` });
       } else {
-        setExtractedDonors((data.data.donors || []).map((d: ExtractedDonor) => ({ ...d, selected: true })));
+        const validated = validateExtractedData(data.data.donors || [], 'donors');
+        setExtractedDonors(validated.map((d: ExtractedDonor) => ({ ...d, selected: true })));
+        toast({ title: 'File analyzed', description: `Found ${validated.length} valid donor records` });
       }
       
       setShowPreview(true);
-      toast({ title: 'File analyzed', description: `Found ${dataType === 'patients' ? data.data.patients?.length : data.data.donors?.length} records` });
     } catch (error) {
       console.error('Error analyzing file:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to analyze file';
+      setAnalysisError(errorMessage);
+      
+      // Provide more detailed error messages
+      let displayMessage = errorMessage;
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        displayMessage = 'Network error: Unable to reach analysis service. Check your internet connection.';
+      } else if (errorMessage.includes('timeout')) {
+        displayMessage = 'Analysis timeout: The file may be too large. Try splitting it into smaller files.';
+      } else if (errorMessage.includes('Rate limit')) {
+        displayMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+      }
+      
       toast({ 
         title: 'Analysis failed', 
-        description: error instanceof Error ? error.message : 'Failed to analyze file',
+        description: displayMessage,
         variant: 'destructive' 
       });
     } finally {
       setIsAnalyzing(false);
+      setRetryCount(0);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -255,7 +409,26 @@ export function FileUpload() {
                     {isAnalyzing ? (
                       <>
                         <Loader2 className="w-12 h-12 text-primary animate-spin" />
-                        <p className="text-muted-foreground">Analyzing all sheets with AI...</p>
+                        <p className="text-muted-foreground">
+                          Analyzing file with AI...
+                          {retryCount > 1 && ` (Retry ${retryCount}/3)`}
+                        </p>
+                      </>
+                    ) : analysisError ? (
+                      <>
+                        <AlertTriangle className="w-12 h-12 text-destructive" />
+                        <p className="text-destructive text-center max-w-md">{analysisError}</p>
+                        <Button 
+                          variant="outline" 
+                          onClick={() => {
+                            setAnalysisError(null);
+                            fileInputRef.current?.click();
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Try Again
+                        </Button>
                       </>
                     ) : (
                       <>
@@ -264,13 +437,13 @@ export function FileUpload() {
                           <FileText className="w-12 h-12 text-red-600" />
                         </div>
                         <p className="text-muted-foreground text-center">
-                          Upload an Excel (.xlsx) or text file<br />
-                          AI will analyze ALL sheets and extract {dataType} data
+                          Upload an Excel (.xlsx), PDF, or text file<br />
+                          AI will analyze ALL sheets/pages and extract {dataType} data
                         </p>
                         <input
                           ref={fileInputRef}
                           type="file"
-                          accept=".xlsx,.xls,.csv,.txt"
+                          accept=".xlsx,.xls,.csv,.txt,.pdf"
                           onChange={handleFileSelect}
                           className="hidden"
                         />
